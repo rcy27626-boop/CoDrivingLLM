@@ -208,7 +208,7 @@ class KinematicObservation(ObservationType):
             df = pd.concat([df, pd.DataFrame.from_records(
                 [v.to_dict(origin, observe_intentions=self.observe_intentions)
                  for v in close_vehicles[-self.vehicles_count + 1:]])[self.features]],
-                          ], ignore_index=True)
+                           ignore_index=True)
 
         # Normalize and clip
         if self.normalize:
