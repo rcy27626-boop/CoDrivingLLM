@@ -1,17 +1,39 @@
 import random
 from langchain.vectorstores import Chroma
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.embeddings.base import Embeddings
 from langchain.docstore.document import Document
 import os
+from openai import OpenAI
 
-api_key = 'your key here'
-os.environ["OPENAI_API_KEY"] = api_key
-# os.environ["http_proxy"] = 'http://127.0.0.1:7890'  # region gpt is not directly available
-# os.environ["https_proxy"] = 'http://127.0.0.1:7890'
+# 切到硅基流动的 BAAI/bge-m3 嵌入模型，API Key 通过环境变量传入
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
+if not SILICONFLOW_API_KEY:
+    raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
+SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+SILICONFLOW_EMBEDDING_MODEL = "BAAI/bge-m3"
+
+
+class SiliconFlowEmbeddings(Embeddings):
+    """兼容 langchain Embeddings 接口的硅基流动嵌入类，调用 BAAI/bge-m3。"""
+
+    def __init__(self, api_key=None, model=SILICONFLOW_EMBEDDING_MODEL,
+                 base_url=SILICONFLOW_BASE_URL):
+        self.client = OpenAI(api_key=api_key or SILICONFLOW_API_KEY,
+                             base_url=base_url)
+        self.model = model
+
+    def embed_documents(self, texts):
+        response = self.client.embeddings.create(model=self.model, input=texts)
+        return [item.embedding for item in response.data]
+
+    def embed_query(self, text):
+        response = self.client.embeddings.create(model=self.model, input=[text])
+        return response.data[0].embedding
+
 
 class DrivingMemory:
     def __init__(self, env) -> None:
-        self.embedding = OpenAIEmbeddings()
+        self.embedding = SiliconFlowEmbeddings()
         db_path = './db/' + str(env.spec.id)
         self.scenario_memory = Chroma(
             embedding_function=self.embedding,

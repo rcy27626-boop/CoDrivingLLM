@@ -1,3 +1,4 @@
+import os
 from llm_controller.prompt_llm import *
 from llm_controller.Scenario_description import Scenario
 from openai import OpenAI
@@ -5,7 +6,12 @@ import numpy as np
 import highway_env
 import json
 
-api_key = "your key here"
+# 切到硅基流动（兼容 OpenAI 接口），API Key 通过环境变量传入
+api_key = os.getenv("SILICONFLOW_API_KEY")
+if not api_key:
+    raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
+SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 class LlmAgent_negotiation_module():
     def __init__(self, env):
@@ -138,15 +144,9 @@ class LlmAgent_negotiation_module():
         return ref_list
 
     def send_to_chatgpt(self, env, conflict):
-        # Implement your LLM interaction here (similar to LlmAgent_action_module)
-        # This method sends the scenario description to LLM and retrieves the suggested action
-        proxy_url = "http://127.0.0.1:7890"
-        import httpx
-        http_client = httpx.Client(proxies={"http://": proxy_url, "https://": proxy_url})
-
-        client = OpenAI(api_key=api_key,  # put your api key here
-                        base_url="https://api.openai.com/v1",
-                        http_client=http_client)
+        # 硅基流动兼容 OpenAI 接口，无需代理
+        client = OpenAI(api_key=api_key,
+                        base_url=SILICONFLOW_BASE_URL)
 
         conflicting_vehicles_info = []
         conflict = self.detect_conflicts(env)
@@ -197,7 +197,7 @@ class LlmAgent_negotiation_module():
         )
 
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
             messages=[{"role": "system", "content": prompt}, ])
 
         llm_response = completion.choices[0].message

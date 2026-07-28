@@ -1,3 +1,4 @@
+import os
 from .prompt_llm import *
 from .Scenario_description import Scenario
 import json
@@ -6,7 +7,12 @@ import numpy as np
 import gym
 import re
 
-api_key = "your key here"
+# 切到硅基流动（兼容 OpenAI 接口），API Key 通过环境变量传入，避免泄露到 git
+api_key = os.getenv("SILICONFLOW_API_KEY")
+if not api_key:
+    raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
+SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 class LlmAgent_action_module():
     def __init__(self, env):
@@ -138,13 +144,9 @@ class LlmAgent_action_module():
 
 
     def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory):
-        proxy_url = "http://127.0.0.1:7890"
-        import httpx
-        http_client = httpx.Client(proxies={"http://": proxy_url, "https://": proxy_url})
-
-        client = OpenAI(api_key=api_key,  # put your api key here
-                        base_url="https://api.openai.com/v1",
-                        http_client=http_client)
+        # 硅基流动兼容 OpenAI 接口，无需代理
+        client = OpenAI(api_key=api_key,
+                        base_url=SILICONFLOW_BASE_URL)
 
         if self.is_intersection:
             message_prefix = self.pre_prompt.SYSTEM_MESSAGE_PREFIX_intersection
@@ -178,7 +180,7 @@ class LlmAgent_action_module():
                   "    \"decision\": {\"<ego car's decision, ONE of the available actions (decision have to be one of the following action!!!:  LANE_LEFT, IDLE, LANE_RIGHT, FASTER, SLOWER)>\"},\n"
                   "```\n")
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",  # "gpt-3.5-turbo-16k-0613" # "gpt-3.5-turbo-1106"(cheaper)
+            model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
             messages=[{"role": "system", "content": prompt},])
 
         llm_response = completion.choices[0].message
