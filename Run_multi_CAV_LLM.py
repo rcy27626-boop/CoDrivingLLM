@@ -55,7 +55,7 @@ env = gym.make('intersection-multi-agent-v0')
 # env = gym.make('highway-v0')
 
 
-for i in range(100):
+for i in range(2):
     video_path = './llm_controller/video/' + str(i) + '.mp4'  
     writer = imageio.get_writer(video_path, fps=30) 
     file_name, workbook = open_excel(i)
