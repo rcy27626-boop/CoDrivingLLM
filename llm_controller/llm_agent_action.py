@@ -100,12 +100,13 @@ class LlmAgent_action_module():
         actions_all (dict): Dictionary mapping IDs to action names.
 
         Returns:
-        int: The ID corresponding to the action name, or -1 if not found.
+        int: The ID corresponding to the action name, or 1 (IDLE) if not found.
         """
         for id, name in actions_all.items():
             if name == action_name or name == action_name.upper():
                 return id
-        return -1  # Return -1 or any suitable value to indicate 'not found'
+        # Fallback: 返回 IDLE 的 id（最安全动作，避免 KeyError 崩溃）
+        return 1
 
     def transfer_negotiation_prompts_to_results(self, ego_veh, negotiation_prompt):
         vehicle_conflicts = self.extract_vehicle_conflicts(negotiation_prompt, str(ego_veh).split(":")[0].strip())
@@ -181,7 +182,9 @@ class LlmAgent_action_module():
                   "```\n")
         completion = client.chat.completions.create(
             model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
-            messages=[{"role": "system", "content": prompt},])
+            messages=[{"role": "system", "content": prompt}],
+            temperature=0,  # 让输出更确定，格式更稳定
+        )
 
         llm_response = completion.choices[0].message
         decision_content = llm_response.content
@@ -205,33 +208,54 @@ class LlmAgent_action_module():
                 "The method get_available_actions is not implemented in the underlying environment.")
 
     def extract_decision(self, response_content):
+        """鲁棒地从 LLM 输出中提取决策 action。
+        解析失败时 fallback 到 IDLE（最安全动作），避免程序崩溃。
+        """
         try:
-            # print(response_content)
-            start = response_content.find('"decision": {') + len('"decision": {')
-            end = response_content.find('}', start)
-            decision = response_content[start:end].strip('"')
+            decision = None
+            # 策略 1: 标准格式 "decision": {"FASTER"}
+            if '"decision"' in response_content:
+                start = response_content.find('"decision"')
+                brace_start = response_content.find('{', start)
+                if brace_start != -1:
+                    brace_end = response_content.find('}', brace_start)
+                    if brace_end != -1:
+                        decision = response_content[brace_start + 1:brace_end].strip().strip('"').strip("'")
+
+            # 策略 2: 全文搜 action 关键字（兼容 Qwen 等模型格式不稳定）
+            if not decision or not any(a in decision.upper() for a in ['FASTER', 'SLOWER', 'LANE_LEFT', 'LANE_RIGHT', 'IDLE']):
+                upper = response_content.upper()
+                for action in ['FASTER', 'SLOWER', 'LANE_LEFT', 'LANE_RIGHT', 'IDLE']:
+                    if action in upper:
+                        decision = action
+                        break
+
+            # 策略 3: 标准化到合法 action
             if self.is_intersection:
-                if "FASTER" in decision:
-                    decision = "FASTER"
-                elif "SLOWER" in decision:
-                    decision = "SLOWER"
-                elif "IDLE" in decision:
-                    decision = "IDLE"
+                if decision and "FASTER" in decision.upper():
+                    return "FASTER"
+                elif decision and "SLOWER" in decision.upper():
+                    return "SLOWER"
+                elif decision and "IDLE" in decision.upper():
+                    return "IDLE"
             else:
-                if "LANE_LEFT" in decision:
-                    decision = "LANE_LEFT"
-                elif "LANE_RIGHT" in decision:
-                    decision = "LANE_RIGHT"
-                elif "FASTER" in decision:
-                    decision = "FASTER"
-                elif "SLOWER" in decision:
-                    decision = "SLOWER"
-                elif "IDLE" in decision:
-                    decision = "IDLE"
-            return decision
+                if decision and "LANE_LEFT" in decision.upper():
+                    return "LANE_LEFT"
+                elif decision and "LANE_RIGHT" in decision.upper():
+                    return "LANE_RIGHT"
+                elif decision and "FASTER" in decision.upper():
+                    return "FASTER"
+                elif decision and "SLOWER" in decision.upper():
+                    return "SLOWER"
+                elif decision and "IDLE" in decision.upper():
+                    return "IDLE"
+
+            # 全部失败：fallback 到 IDLE
+            print(f"无法解析 LLM 输出: {response_content[:100]!r}，fallback 到 IDLE")
+            return "IDLE"
         except Exception as e:
-            print(f"Error in extracting decision: {e}")
-            return None
+            print(f"Error in extracting decision: {e}，fallback 到 IDLE")
+            return "IDLE"
 
     def prompt_engineer(self,  ego_veh, road, env, negotiation_results, conflicting_info):
         # self.sce.updateVehicles(obs, frame, i)

@@ -198,7 +198,9 @@ class LlmAgent_negotiation_module():
 
         completion = client.chat.completions.create(
             model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
-            messages=[{"role": "system", "content": prompt}, ])
+            messages=[{"role": "system", "content": prompt}, ],
+            temperature=0,  # 让输出更确定，格式更稳定
+        )
 
         llm_response = completion.choices[0].message
         negotiation_content = llm_response.content
