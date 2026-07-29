@@ -11,7 +11,7 @@ api_key = os.getenv("SILICONFLOW_API_KEY")
 if not api_key:
     raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
-SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 class LlmAgent_negotiation_module():
     def __init__(self, env):

@@ -12,7 +12,7 @@ api_key = os.getenv("SILICONFLOW_API_KEY")
 if not api_key:
     raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
-SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 class LlmAgent_action_module():
     def __init__(self, env):
@@ -179,7 +179,17 @@ class LlmAgent_action_module():
                   "```\n"
                   "Final Answer: \n"
                   "    \"decision\": {\"<ego car's decision, ONE of the available actions (decision have to be one of the following action!!!:  LANE_LEFT, IDLE, LANE_RIGHT, FASTER, SLOWER)>\"},\n"
-                  "```\n")
+                  "```\n"
+                  "\n"
+                  "Example of a correct response:\n"
+                  "Final Answer:\n"
+                  "    \"decision\": {\"FASTER\"}\n"
+                  "\n"
+                  "Another example:\n"
+                  "Final Answer:\n"
+                  "    \"decision\": {\"IDLE\"}\n"
+                  "\n"
+                  "IMPORTANT: Only output the Final Answer in the exact format above. Do NOT add any explanation, thinking, or extra text.\n")
         completion = client.chat.completions.create(
             model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
             messages=[{"role": "system", "content": prompt}],
