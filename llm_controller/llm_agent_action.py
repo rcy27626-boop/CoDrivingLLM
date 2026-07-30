@@ -8,11 +8,9 @@ import gym
 import re
 
 # 切到硅基流动（兼容 OpenAI 接口），API Key 通过环境变量传入，避免泄露到 git
-api_key = os.getenv("SILICONFLOW_API_KEY")
-if not api_key:
-    raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
-SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
-SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+api_key = "ollama"
+SILICONFLOW_BASE_URL = "http://localhost:11434/v1"
+SILICONFLOW_MODEL = "qwen2.5:32b"
 
 class LlmAgent_action_module():
     def __init__(self, env):
