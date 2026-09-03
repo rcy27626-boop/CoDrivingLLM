@@ -4,13 +4,18 @@ from langchain.embeddings.base import Embeddings
 from langchain.docstore.document import Document
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
-# 切到硅基流动的 BAAI/bge-m3 嵌入模型，API Key 通过环境变量传入
+# 自动加载 .env 文件
+load_dotenv()
+
+# Memory 模块独立用硅基流动配置（不影响主决策的 LLM 配置）
+# 默认值是硅基流动云端（嵌入模型用量小，免费额度够用）
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
 if not SILICONFLOW_API_KEY:
-    raise ValueError("未找到环境变量 SILICONFLOW_API_KEY，请在服务器上 export SILICONFLOW_API_KEY=sk-xxx")
-SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
-SILICONFLOW_EMBEDDING_MODEL = "BAAI/bge-m3"
+    raise ValueError("memory.py 需要环境变量 SILICONFLOW_API_KEY，请在 .env 中配置 sk-xxx")
+SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+SILICONFLOW_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "BAAI/bge-m3")
 
 
 class SiliconFlowEmbeddings(Embeddings):
@@ -34,7 +39,12 @@ class SiliconFlowEmbeddings(Embeddings):
 class DrivingMemory:
     def __init__(self, env) -> None:
         self.embedding = SiliconFlowEmbeddings()
-        db_path = './db/' + str(env.spec.id)
+        # 支持外部注入记忆库目录（如 Run_multi_CAV_LLM.py 按 scene/method 隔离），
+        # 未注入时保持原行为：./db/<env_id>
+        db_base = os.getenv("MEMORY_DB_DIR") or './db/'
+        # 注入时用 <MEMORY_DB_DIR>/<env_id>，否则用 ./db/<env_id>（保持原有按场景分库逻辑）
+        db_path = os.path.join(db_base, str(env.spec.id))
+        os.makedirs(db_base, exist_ok=True)
         self.scenario_memory = Chroma(
             embedding_function=self.embedding,
             persist_directory=db_path

@@ -23,3 +23,21 @@ _build
 **/out/*
 .iml
 .xml
+
+# Environment configuration (每个环境自己的 .env，不进 git)
+.env
+.env.local
+
+# 含真实 API Key 的私有环境配置，禁止入库（本机/服务器各自维护）
+.env.server
+.env.windows
+
+# 本地实验产物与向量库
+db/
+llm_controller/excel/
+llm_controller/result/
+llm_controller/video/*.mp4
+
+# my_modifications 备份文件
+my_modifications/backup_*/
+my_modifications/backup_2026*/*

@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from .prompt_llm import *
 from .Scenario_description import Scenario
 import json
@@ -7,10 +8,13 @@ import numpy as np
 import gym
 import re
 
-# 切到硅基流动（兼容 OpenAI 接口），API Key 通过环境变量传入，避免泄露到 git
-api_key = "ollama"
-SILICONFLOW_BASE_URL = "http://localhost:11434/v1"
-SILICONFLOW_MODEL = "qwen2.5:32b"
+# 自动加载 .env 文件（每个环境有自己的 .env，不进 git）
+load_dotenv()
+
+# 用环境变量配置 LLM，便于在不同环境间切换（Windows/Linux/云端）
+api_key = os.getenv("LLM_API_KEY", "ollama")
+SILICONFLOW_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+SILICONFLOW_MODEL = os.getenv("LLM_MODEL", "qwen2.5:32b")
 
 class LlmAgent_action_module():
     def __init__(self, env):
@@ -21,6 +25,7 @@ class LlmAgent_action_module():
         self.frame = 0
         # self.obs = self.env.reset()
         self.done = False
+        self.parse_failures = 0  # 统计 LLM 输出解析失败次数（用于 progress.json）
         self.toolModels = [
             getAvailableActions(),
             getAvailableLanes(self.sce),
@@ -34,7 +39,9 @@ class LlmAgent_action_module():
         self.get_actions(env)
 
 
-    def llm_controller_run(self, env, negotiation_prompt, conflicting_info, controlled_vehicles, memory):
+    def llm_controller_run(self, env, negotiation_prompt, conflicting_info, controlled_vehicles, memory,
+                           use_memory=False, memory_top_k=2):
+        self.parse_failures = 0  # 重置本回合解析失败计数
         llm_actions = []
         for i, ego_veh in enumerate(controlled_vehicles):
             scene_name = self.get_scene_name(env)
@@ -46,7 +53,8 @@ class LlmAgent_action_module():
             negotiation_results = self.transfer_negotiation_prompts_to_results(ego_veh, negotiation_prompt)
             prompt_info = self.prompt_engineer(ego_veh, env.road, env, negotiation_results, conflicting_info)  # prompt engineer
             # print("prompt_info:", prompt_info)
-            llm_action = self.send_to_chatgpt(ego_veh, prompt_info, negotiation_results, memory)
+            llm_action = self.send_to_chatgpt(ego_veh, prompt_info, negotiation_results, memory,
+                                              use_memory=use_memory, memory_top_k=memory_top_k)
             # self.memory_update(memory, prompt_info, llm_action)  # active this line to restore new memory during interaction
             llm_actions.append(llm_action)
             print("llm_action:", llm_action, ego_veh, 'speed now:', ego_veh.speed)
@@ -117,11 +125,11 @@ class LlmAgent_action_module():
                 negotiation_results += f"- You have conflict with {first_vehicle}. It is suggested that you should {'passes first' if order == 'first' else 'passes second'}.\n"
         return negotiation_results
 
-    def relative_memory(self, memory, prompt_info):
+    def relative_memory(self, memory, prompt_info, top_k=2):
         experience = ""
         extract_prompt = prompt_info.strip().split('\n')
         query_scenario = '\n'.join(extract_prompt[-2:])  # only save the last two line of prompt_info which store the most dangerous conflict as memory page_content
-        past_decisions = memory.retrieveMemory(query_scenario, top_k=2)
+        past_decisions = memory.retrieveMemory(query_scenario, top_k=top_k)
         for past_decision in past_decisions:
             experience += f"- Last time {past_decision['negotiation_result']}, you choose to {past_decision['final_action']}, it is {past_decision['comments']}\n"
         experience += f"Above messages are some examples of how you make a decision in the past. Those scenarios are similar to the current scenario. You should refer to those examples to make a decision for the current scenario."
@@ -142,7 +150,7 @@ class LlmAgent_action_module():
         print(' New mem has been added ...')
 
 
-    def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory):
+    def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory, use_memory=False, memory_top_k=2):
         # 硅基流动兼容 OpenAI 接口，无需代理
         client = OpenAI(api_key=api_key,
                         base_url=SILICONFLOW_BASE_URL)
@@ -158,7 +166,10 @@ class LlmAgent_action_module():
         # action_name = ACTIONS_ALL.get(action_id, "Unknown Action")
         # action_description = ACTIONS_DESCRIPTION.get(action_id, "No description available")
         # past_memory = self.relative_memory(memory, current_scenario)  # with this line to active memory retrivel, active line46 to build your own database before you output past memory
-        past_memory = ''
+        if use_memory:
+            past_memory = self.relative_memory(memory, current_scenario, memory_top_k)
+        else:
+            past_memory = ''
 
         prompt = (f"{message_prefix}"
                   f"You, the 'ego' car, are now driving. You have already driven for some seconds.\n"
@@ -259,9 +270,11 @@ class LlmAgent_action_module():
                     return "IDLE"
 
             # 全部失败：fallback 到 IDLE
+            self.parse_failures += 1
             print(f"无法解析 LLM 输出: {response_content[:100]!r}，fallback 到 IDLE")
             return "IDLE"
         except Exception as e:
+            self.parse_failures += 1
             print(f"Error in extracting decision: {e}，fallback 到 IDLE")
             return "IDLE"
 

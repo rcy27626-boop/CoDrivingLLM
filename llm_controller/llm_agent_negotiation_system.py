@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from llm_controller.prompt_llm import *
 from llm_controller.Scenario_description import Scenario
 from openai import OpenAI
@@ -6,10 +7,13 @@ import numpy as np
 import highway_env
 import json
 
-# 切到硅基流动（兼容 OpenAI 接口），API Key 通过环境变量传入
-api_key = "ollama"
-SILICONFLOW_BASE_URL = "http://localhost:11434/v1"
-SILICONFLOW_MODEL = "qwen2.5:32b"
+# 自动加载 .env 文件（每个环境有自己的 .env，不进 git）
+load_dotenv()
+
+# 用环境变量配置 LLM，便于在不同环境间切换
+api_key = os.getenv("LLM_API_KEY", "ollama")
+SILICONFLOW_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+SILICONFLOW_MODEL = os.getenv("LLM_MODEL", "qwen2.5:32b")
 
 class LlmAgent_negotiation_module():
     def __init__(self, env):
