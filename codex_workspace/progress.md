@@ -38,3 +38,8 @@
 - 完成 intersection / merge / highway 三个场景的无 LLM prompt 生成测试
 - 完成 intersection 5-step mock LLM 全链路冒烟测试
 - 待用户确认后提交并推送，服务器再执行 `git pull --ff-only origin master` 并重跑 smoke test
+## 2026-09-08
+- 定位 `qwen3.8:27b` 报错 `no user query found in messages` 的根因：协商与决策请求原本只包含 `system` 消息
+- 修复协商模块和决策模块的 OpenAI-compatible 请求格式，改为 `system + user`
+- 使用假 OpenAI 客户端验证两个模块的请求 roles 均为 `['system', 'user']`，user 内容非空
+- 待用户确认后提交推送；服务器拉取后重跑 `qwen3.8:27b` 对比实验

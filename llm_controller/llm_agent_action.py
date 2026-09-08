@@ -202,7 +202,10 @@ class LlmAgent_action_module():
                   "IMPORTANT: Only output the Final Answer in the exact format above. Do NOT add any explanation, thinking, or extra text.\n")
         completion = client.chat.completions.create(
             model=SILICONFLOW_MODEL,  # 硅基流动的 Qwen2.5-7B-Instruct
-            messages=[{"role": "system", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "You are an expert driving decision assistant. Follow the user's instructions and output format exactly."},
+                {"role": "user", "content": prompt},
+            ],
             temperature=0,  # 让输出更确定，格式更稳定
         )
 
