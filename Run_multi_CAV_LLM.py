@@ -174,8 +174,10 @@ def main():
 
             terminated = False
             t = 0
-            # 固定随机种子：第 i 轮用 seed+i，保证不同方法看到相同初始场景
-            obs = env.reset(seed=args.seed + i)
+            # 本仓库的 highway_env 是旧版 API：reset(is_training, testing_seeds)。
+            # 用 testing mode 显式指定种子，可同时固定 numpy.random 和 random，
+            # 并避免调用被实例属性遮蔽的 env.seed() 方法。
+            obs = env.reset(is_training=False, testing_seeds=args.seed + i)
             llm_calls = 0
             episode_parse_failures = 0
 
