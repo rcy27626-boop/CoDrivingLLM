@@ -316,7 +316,7 @@ class isAccelerationConflictWithCar:
 
     @prompts(name='Is Acceleration Conflict With Car',
              description="""useful when you want to know whether acceleration is safe with a specific car, ONLY when your decision is accelerate. The input to this tool should be a string, representing the id of the car you want to check.""")
-    def inference(self, vid: str, ego_veh, env) -> str:
+    def inference(self, vid: str, ego_veh) -> str:
 
         if vid not in self.sce.road_info.vehicles:
             return "Your input is not a valid vehicle id, make sure you use `Get Lane Involved Car` tool first!"

@@ -282,7 +282,7 @@ class LlmAgent_action_module():
     def prompt_engineer(self,  ego_veh, road, env, negotiation_results, conflicting_info):
         # self.sce.updateVehicles(obs, frame, i)
         # Observation translation
-        msg0 = available_action(self.toolModels, ego_veh, road, env)
+        msg0 = available_action(self.toolModels, ego_veh, road, env, is_intersection=self.is_intersection)
         availabel_lane, msg1 = get_available_lanes(self.toolModels, ego_veh, road, env)
         msg2, lane_cars_id = get_involved_cars(self.toolModels, ego_veh, road, env, availabel_lane)
         #lane_cars_id -- {'lane_0': {'leadingCar': None, 'rearingCar': IDMVehicle #224: [173.94198546   0.        ]}}

@@ -30,3 +30,11 @@
 - 按用户要求更新日志规则：
   - 项目源文件修改记录放入 `my_modifications/change_logs/`
   - `codex_workspace/` 内文件修改记录放入 `codex_workspace/change_logs/`
+
+## 2026-09-08
+- 修复 `isAccelerationConflictWithCar.inference()` 未使用 `env` 参数导致的接口不匹配崩溃
+- 修复 `prompt_engineer()` 未向 `available_action()` 传递 `is_intersection` 的问题
+- 完成 `.inference()` 定义与调用静态审计：当前运行链路全部匹配
+- 完成 intersection / merge / highway 三个场景的无 LLM prompt 生成测试
+- 完成 intersection 5-step mock LLM 全链路冒烟测试
+- 待用户确认后提交并推送，服务器再执行 `git pull --ff-only origin master` 并重跑 smoke test
