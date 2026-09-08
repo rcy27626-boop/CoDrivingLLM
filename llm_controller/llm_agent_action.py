@@ -40,7 +40,7 @@ class LlmAgent_action_module():
 
 
     def llm_controller_run(self, env, negotiation_prompt, conflicting_info, controlled_vehicles, memory,
-                           use_memory=False, memory_top_k=2):
+                           use_memory=False, memory_top_k=2, memory_update=False):
         self.parse_failures = 0  # 重置本回合解析失败计数
         llm_actions = []
         for i, ego_veh in enumerate(controlled_vehicles):
@@ -55,7 +55,8 @@ class LlmAgent_action_module():
             # print("prompt_info:", prompt_info)
             llm_action = self.send_to_chatgpt(ego_veh, prompt_info, negotiation_results, memory,
                                               use_memory=use_memory, memory_top_k=memory_top_k)
-            # self.memory_update(memory, prompt_info, llm_action)  # active this line to restore new memory during interaction
+            if memory_update and memory is not None:
+                self.memory_update(memory, prompt_info, llm_action)
             llm_actions.append(llm_action)
             print("llm_action:", llm_action, ego_veh, 'speed now:', ego_veh.speed)
         return llm_actions
@@ -150,7 +151,7 @@ class LlmAgent_action_module():
         print(' New mem has been added ...')
 
 
-    def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory, use_memory=False, memory_top_k=2):
+    def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory, use_memory=False, memory_top_k=2, memory_update=False):
         # 硅基流动兼容 OpenAI 接口，无需代理
         client = OpenAI(api_key=api_key,
                         base_url=SILICONFLOW_BASE_URL)

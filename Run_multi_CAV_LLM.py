@@ -107,7 +107,17 @@ def main():
     parser.add_argument("--start", type=int, default=0,
                         help="起始轮次（断点续跑）")
     parser.add_argument("--output_dir", default=None,
-                        help="输出根目录，默认 ./llm_controller/result/<scene>/<method>")
+                        help="输出根目录，默认 ./llm_controller/result/<batch>/<scene>/<method>")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="基础随机种子，第 i 轮用 seed+i（保证不同方法看到相同初始场景）")
+    parser.add_argument("--no-video", action="store_true", default=False,
+                        help="关闭视频录制（默认录视频；加此开关则不录，加速实验）")
+    parser.add_argument("--memory-update", action="store_true", default=False,
+                        help="是否将每步决策写入记忆库（用于建种子库，默认关闭）")
+    parser.add_argument("--strict-success", action="store_true", default=True,
+                        help="成功判定用论文口径：所有CAV都安全到达（默认开启）；关闭则至少1辆到达")
+    parser.add_argument("--batch", default="default",
+                        help="实验批次名称，隔离输出目录（如 20260903_smoke / 20260905_full）")
     args = parser.parse_args()
 
     # few-shot 参数
@@ -125,99 +135,147 @@ def main():
               "highway": "highway-v0"}[args.scene]
     env = gym.make(env_id)
 
-    # 输出目录：result/<scene>/<method>/{data, video, progress.json, db}
-    root = args.output_dir or os.path.join("llm_controller", "result")
+    # 输出目录：result/<batch>/<scene>/<method>/{data, video, progress.json}
+    root = args.output_dir or os.path.join("llm_controller", "result", args.batch)
     out_dir = os.path.join(root, args.scene, args.method, "data")
     video_dir = os.path.join(root, args.scene, args.method, "video")
     os.makedirs(out_dir, exist_ok=True)
-    os.makedirs(video_dir, exist_ok=True)
+    if not args.no_video:
+        os.makedirs(video_dir, exist_ok=True)
     progress_path = os.path.join(root, args.scene, args.method, "progress.json")
     records = load_progress(progress_path)
 
-    # few-shot 方法使用独立记忆库（0shot / no-negotiation 不创建，避免无谓的嵌入网络调用）
-    if use_memory:
-        mem_dir = os.path.join(root, args.scene, args.method, "db")
+    # 2shot/5shot 共享同一场景的种子记忆库（放在固定位置，不随 batch/method 隔离）
+    # 0shot/no-negotiation 不创建记忆对象，但 --memory-update 建库时也需要路径
+    if use_memory or args.memory_update:
+        mem_dir = os.path.join("llm_controller", "seed_memory", args.scene)
+        os.makedirs(mem_dir, exist_ok=True)
         os.environ["MEMORY_DB_DIR"] = mem_dir
 
     total_start = time.time()
     for i in range(args.start, args.start + args.n):
         print("=" * 70)
-        print(f"[{time.strftime('%H:%M:%S')}] scene={args.scene} method={args.method} episode#{i}")
+        print(f"[{time.strftime('%H:%M:%S')}] scene={args.scene} method={args.method} episode#{i} (seed={args.seed + i})")
         round_start = time.time()
 
-        video_path = os.path.join(video_dir, str(i) + ".mp4")
-        writer = imageio.get_writer(video_path, fps=30)
+        # 单轮错误隔离：某轮崩溃不中断整个批次，记录失败后继续下一轮
+        try:
+            # 视频录制（默认开启，--no-video 时关闭）
+            writer = None
+            if not args.no_video:
+                video_path = os.path.join(video_dir, str(i) + ".mp4")
+                writer = imageio.get_writer(video_path, fps=30)
 
-        file_name, workbook = open_excel(out_dir, i)
+            file_name, workbook = open_excel(out_dir, i)
 
-        # 每轮独立记忆对象（2shot/5shot 时用于检索；0shot/no-negotiation 用 None）
-        memory = DrivingMemory(env) if use_memory else None
+            # 每轮独立记忆对象（2shot/5shot 时用于检索；0shot/no-negotiation 用 None）
+            # --memory-update 建库时也需要记忆对象（写入用）
+            memory = DrivingMemory(env) if (use_memory or args.memory_update) else None
 
-        terminated = False
-        t = 0
-        obs = env.reset()
-        llm_calls = 0
-        episode_parse_failures = 0
+            terminated = False
+            t = 0
+            # 固定随机种子：第 i 轮用 seed+i，保证不同方法看到相同初始场景
+            obs = env.reset(seed=args.seed + i)
+            llm_calls = 0
+            episode_parse_failures = 0
 
-        while not terminated:
-            print("-" * 70)
-            # 协商模块（no-negotiation 时跳过真正的 LLM 调用）
-            llm_agent_conflict_resolver = LlmAgent_negotiation_module(env)
-            if use_negotiation:
-                negotiation_prompt, conflicting_info = llm_agent_conflict_resolver.llm_controller_run(env)
-                llm_calls += 1
+            while not terminated:
+                print("-" * 70)
+                # 协商模块（no-negotiation 时跳过真正的 LLM 调用）
+                llm_agent_conflict_resolver = LlmAgent_negotiation_module(env)
+                if use_negotiation:
+                    negotiation_prompt, conflicting_info = llm_agent_conflict_resolver.llm_controller_run(env)
+                    llm_calls += 1
+                else:
+                    negotiation_prompt, conflicting_info = "", []
+
+                # 决策
+                llm_agent = LlmAgent_action_module(env)
+                llm_actions = llm_agent.llm_controller_run(
+                    env, negotiation_prompt, conflicting_info,
+                    env.controlled_vehicles, memory,
+                    use_memory=use_memory, memory_top_k=memory_top_k,
+                    memory_update=args.memory_update)
+                llm_calls += len(llm_actions)
+                episode_parse_failures += llm_agent.parse_failures
+
+                action = [item for sublist in llm_actions for item in sublist]
+
+                obs, global_reward, terminated, info = env.step(tuple(action), env)
+
+                if not args.no_video and writer is not None:
+                    frame = env.render("rgb_array")
+                    writer.append_data(frame)
+
+                workbook = write_data(workbook, env, t)
+                workbook.save(file_name)
+                t += 1
+
+            if writer is not None:
+                writer.close()
+
+            summary, avg_speed = episode_summary(env)
+            round_dur = round(time.time() - round_start, 1)
+
+            # 成功判定
+            scene_name = get_scene_name(env)
+            if args.strict_success and scene_name in ("intersection", "merge"):
+                # 论文口径：所有 CAV 都安全到达且无碰撞
+                success = (summary["num_crashed"] == 0) and (summary["num_arrived"] == summary["num_cav"])
+            elif scene_name in ("intersection", "merge"):
+                # 宽松口径：无碰撞且至少 1 辆到达
+                success = (summary["num_crashed"] == 0) and (summary["num_arrived"] >= 1)
             else:
-                negotiation_prompt, conflicting_info = "", []
+                # highway：无碰撞即成功（该环境无 has_arrived）
+                success = summary["num_crashed"] == 0
+            # 超时：无碰撞但未全部到达（intersection/merge）
+            timeout = (scene_name in ("intersection", "merge")) and \
+                      (summary["num_crashed"] == 0) and \
+                      (summary["num_arrived"] < summary["num_cav"])
 
-            # 决策
-            llm_agent = LlmAgent_action_module(env)
-            llm_actions = llm_agent.llm_controller_run(
-                env, negotiation_prompt, conflicting_info,
-                env.controlled_vehicles, memory,
-                use_memory=use_memory, memory_top_k=memory_top_k)
-            llm_calls += len(llm_actions)
-            episode_parse_failures += llm_agent.parse_failures
+            record = {
+                "round": i,
+                "scene": args.scene,
+                "method": args.method,
+                "seed": args.seed + i,
+                "success": success,
+                "num_cav": summary["num_cav"],
+                "num_arrived": summary["num_arrived"],
+                "num_crashed": summary["num_crashed"],
+                "timeout": timeout,
+                "avg_speed": avg_speed,
+                "total_steps": t,
+                "llm_calls": llm_calls,
+                "parse_failures": episode_parse_failures,
+                "duration_seconds": round_dur,
+            }
+            records[str(i)] = record
+            save_progress(progress_path, records)
+            print(f"[episode#{i} done] success={success} crashed={summary['num_crashed']}/{summary['num_cav']} arrived={summary['num_arrived']}/{summary['num_cav']} steps={t} llm_calls={llm_calls} dur={round_dur}s")
 
-            action = [item for sublist in llm_actions for item in sublist]
-
-            obs, global_reward, terminated, info = env.step(tuple(action), env)
-
-            frame = env.render("rgb_array")
-            writer.append_data(frame)
-
-            workbook = write_data(workbook, env, t)
-            workbook.save(file_name)
-            t += 1
-
-        writer.close()
-
-        summary, avg_speed = episode_summary(env)
-        round_dur = round(time.time() - round_start, 1)
-        # 成功判定：未碰撞；intersection/merge 还需至少一辆车到达；highway 时间跑完即成功
-        success = (summary["num_crashed"] == 0) and (
-            (summary["num_arrived"] >= 1) if get_scene_name(env) in ("intersection", "merge")
-            else True
-        )
-        timeout = summary["num_arrived"] == 0 and summary["num_crashed"] == 0
-
-        record = {
-            "round": i,
-            "scene": args.scene,
-            "method": args.method,
-            "success": success,
-            "num_cav": summary["num_cav"],
-            "num_arrived": summary["num_arrived"],
-            "num_crashed": summary["num_crashed"],
-            "timeout": timeout,
-            "avg_speed": avg_speed,
-            "total_steps": t,
-            "llm_calls": llm_calls,
-            "parse_failures": episode_parse_failures,
-            "duration_seconds": round_dur,
-        }
-        records[str(i)] = record
-        save_progress(progress_path, records)
-        print(f"[episode#{i} done] {record}")
+        except Exception as e:
+            # 单轮崩溃：记录失败，关闭 writer，继续下一轮
+            round_dur = round(time.time() - round_start, 1)
+            print(f"[episode#{i} 崩溃] {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            if 'writer' in dir() and writer is not None:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            record = {
+                "round": i,
+                "scene": args.scene,
+                "method": args.method,
+                "seed": args.seed + i,
+                "success": False,
+                "error": f"{type(e).__name__}: {str(e)[:200]}",
+                "duration_seconds": round_dur,
+            }
+            records[str(i)] = record
+            save_progress(progress_path, records)
+            continue
 
     total_dur = round(time.time() - total_start, 1)
     print("=" * 70)

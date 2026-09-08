@@ -5,13 +5,13 @@
 
 set -e
 
-if [ ! -f .env.server ]; then
+if [ ! -f my_workspace/env/.env.server ]; then
     echo "错误：未找到 .env.server，请参考 .env.example 在服务器上创建（不要把真实 Key 提交到 git）。" >&2
     exit 1
 fi
 
 echo "=== 复制服务器配置 ==="
-cp .env.server .env
+cp my_workspace/env/.env.server .env
 echo "=== 当前模型 ==="
 grep '^LLM_MODEL' .env || true
 echo ""

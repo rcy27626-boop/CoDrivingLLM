@@ -36,14 +36,14 @@ if not "%~3"=="" set "_n=%~3"
 if not "%~4"=="" set "_start=%~4"
 
 REM ---- 检查本机私密配置是否存在 ----
-if exist .env.windows goto :have_config
+if exist my_workspace\env\.env.windows goto :have_config
 echo [错误] 未找到 .env.windows，请参考 .env.example 创建本机配置（不要把真实 Key 提交到 git）。
 exit /b 1
 
 :have_config
 REM ---- 加载 Windows 模型配置到 .env ----
 echo === 复制 Windows 模型配置到 .env ===
-copy /Y .env.windows .env > nul
+copy /Y my_workspace\env\.env.windows .env > nul
 
 echo === 当前模型 ===
 findstr /B "LLM_MODEL" .env
