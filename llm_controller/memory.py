@@ -17,14 +17,24 @@ if not SILICONFLOW_API_KEY:
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "BAAI/bge-m3")
 
+# 进程级单例嵌入客户端：复用连接，避免每个 DrivingMemory 新建 OpenAI client 泄漏 fd
+_embedding_client = None
+
+
+def _get_embedding_client(api_key, base_url):
+    global _embedding_client
+    if _embedding_client is None:
+        _embedding_client = OpenAI(api_key=api_key, base_url=base_url)
+    return _embedding_client
+
+
 
 class SiliconFlowEmbeddings(Embeddings):
     """兼容 langchain Embeddings 接口的硅基流动嵌入类，调用 BAAI/bge-m3。"""
 
     def __init__(self, api_key=None, model=SILICONFLOW_EMBEDDING_MODEL,
                  base_url=SILICONFLOW_BASE_URL):
-        self.client = OpenAI(api_key=api_key or SILICONFLOW_API_KEY,
-                             base_url=base_url)
+        self.client = _get_embedding_client(api_key or SILICONFLOW_API_KEY, base_url)
         self.model = model
 
     def embed_documents(self, texts):

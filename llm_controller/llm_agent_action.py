@@ -16,6 +16,22 @@ api_key = os.getenv("LLM_API_KEY", "ollama")
 SILICONFLOW_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 SILICONFLOW_MODEL = os.getenv("LLM_MODEL", "qwen2.5:32b")
 
+# 进程级单例 OpenAI 客户端：避免每次请求新建 client 造成 socket/fd 泄漏
+# （长时间大批量请求会出现 "Too many open files" / "Device or resource busy"）
+_llm_client = None
+
+
+def _get_llm_client():
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = OpenAI(
+            api_key=api_key,
+            base_url=SILICONFLOW_BASE_URL,
+            timeout=1800.0,   # 本地 27B/32B 模型单次生成可能较慢，给足超时
+            max_retries=1,    # 连接失败仅重试 1 次，避免反复建连加剧 fd 压力
+        )
+    return _llm_client
+
 class LlmAgent_action_module():
     def __init__(self, env):
         # self.env = env
@@ -152,9 +168,8 @@ class LlmAgent_action_module():
 
 
     def send_to_chatgpt(self, ego_veh, current_scenario, negotiation_results, memory, use_memory=False, memory_top_k=2, memory_update=False):
-        # 硅基流动兼容 OpenAI 接口，无需代理
-        client = OpenAI(api_key=api_key,
-                        base_url=SILICONFLOW_BASE_URL)
+        # 复用进程级单例客户端（防止 fd 泄漏），连接池自动复用
+        client = _get_llm_client()
 
         if self.is_intersection:
             message_prefix = self.pre_prompt.SYSTEM_MESSAGE_PREFIX_intersection
