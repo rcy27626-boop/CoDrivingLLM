@@ -7,7 +7,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 # 自动加载 .env 文件
-load_dotenv()
+load_dotenv(override=True)
 
 # Memory 模块独立用硅基流动配置（不影响主决策的 LLM 配置）
 # 默认值是硅基流动云端（嵌入模型用量小，免费额度够用）

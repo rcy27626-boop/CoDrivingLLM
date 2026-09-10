@@ -9,7 +9,7 @@ import gym
 import re
 
 # 自动加载 .env 文件（每个环境有自己的 .env，不进 git）
-load_dotenv()
+load_dotenv(override=True)
 
 # 用环境变量配置 LLM，便于在不同环境间切换（Windows/Linux/云端）
 api_key = os.getenv("LLM_API_KEY", "ollama")
