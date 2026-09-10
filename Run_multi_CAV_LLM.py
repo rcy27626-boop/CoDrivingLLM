@@ -213,6 +213,10 @@ def main():
                 workbook.save(file_name)
                 t += 1
 
+            # 每集结束强制落盘，避免最后不足一个 batch 的记忆只停留在内存中。
+            if memory is not None:
+                memory.flush()
+
             if writer is not None:
                 writer.close()
 
@@ -266,6 +270,9 @@ def main():
                     writer.close()
                 except Exception:
                     pass
+            # 异常退出时尽量保存已缓存的记忆，flush 自身会捕获写入异常。
+            if 'memory' in locals() and memory is not None:
+                memory.flush()
             record = {
                 "round": i,
                 "scene": args.scene,

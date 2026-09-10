@@ -17,6 +17,19 @@ if not SILICONFLOW_API_KEY:
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "BAAI/bge-m3")
 
+
+def _get_memory_batch_size():
+    """读取记忆写入批大小；设为 1 时退化为原先的逐条写入。"""
+    raw = os.getenv("MEMORY_EMBED_BATCH_SIZE", "16")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        print(f"无效的 MEMORY_EMBED_BATCH_SIZE={raw!r}，回退为 16")
+        return 16
+
+
+MEMORY_EMBED_BATCH_SIZE = _get_memory_batch_size()
+
 # 进程级单例嵌入客户端：复用连接，避免每个 DrivingMemory 新建 OpenAI client 泄漏 fd
 _embedding_client = None
 
@@ -49,6 +62,8 @@ class SiliconFlowEmbeddings(Embeddings):
 class DrivingMemory:
     def __init__(self, env) -> None:
         self.embedding = SiliconFlowEmbeddings()
+        self.embed_batch_size = MEMORY_EMBED_BATCH_SIZE
+        self._pending_documents = []
         # 支持外部注入记忆库目录（如 Run_multi_CAV_LLM.py 按 scene/method 隔离），
         # 未注入时保持原行为：./db/<env_id>
         db_base = os.getenv("MEMORY_DB_DIR") or './db/'
@@ -65,6 +80,8 @@ class DrivingMemory:
 
     def retrieveMemory(self, query_scenario, top_k=5):
         """Retrieve the most similar scenarios from memory."""
+        # 若同时开启写库与检索，先落盘，确保本次新增经验可被检索到。
+        self.flush()
         similarity_results = self.scenario_memory.similarity_search_with_score(query_scenario, k=top_k)
         fewshot_results = []
         for idx in range(0, len(similarity_results)):
@@ -102,14 +119,34 @@ class DrivingMemory:
     #     return fewshot_results
 
     def addMemory(self, sce_descrip, human_question, negotiation, action, comments):
-        """Add a new scenario to memory."""
+        """缓存一条记忆；达到批大小后批量写入 Chroma。"""
         try:
             doc = Document(page_content=sce_descrip, metadata={"human_question": human_question,
                           'negotiation_result': negotiation, 'final_action': action, 'comments': comments})
-            self.scenario_memory.add_documents([doc])
+            self._pending_documents.append(doc)
+            if len(self._pending_documents) >= self.embed_batch_size:
+                self.flush()
             # print(f"Added scenario to memory: {sce_descrip}")
         except Exception as e:
             print(f"Failed to add scenario: {e}")
+
+    def flush(self):
+        """将缓冲区中的记忆批量写入 Chroma，返回本次成功写入条数。"""
+        if not self._pending_documents:
+            return 0
+
+        pending = self._pending_documents
+        try:
+            # Chroma 会将整个列表传给 embed_documents，从而合并为一次 embedding 请求。
+            self.scenario_memory.add_documents(pending)
+        except Exception as e:
+            # 失败时保留缓冲区，下次触发或 episode 结束时重试，避免静默丢失。
+            print(f"Failed to add scenario batch ({len(pending)} items): {e}")
+            return 0
+
+        self._pending_documents = []
+        print(f"Flushed {len(pending)} memory items to Chroma.")
+        return len(pending)
 
     def deleteMemory(self, scenario_id):
         """Delete a scenario from memory by its ID."""
