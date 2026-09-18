@@ -208,7 +208,11 @@ class IntersectionEnv(AbstractEnv):
         # Random vehicles
         simulation_steps = 3
         for t in range(n_vehicles - 1):
-            self._spawn_vehicle(np.linspace(0, 80, n_vehicles)[t])
+            # 方向D 改动 #18：原来这里用的是 _spawn_vehicle 的默认参数（死配置 0.6），
+            # config["spawn_probability"] 根本没被读取。改为显式传入后 --spawn-probability 才真的生效；
+            # 默认 0.6 与硬编码默认值相同，因此不改变原有行为。
+            self._spawn_vehicle(np.linspace(0, 80, n_vehicles)[t],
+                                spawn_probability=self.config["spawn_probability"])
         for _ in range(simulation_steps):
             [(self.road.act(), self.road.step(1 / self.config["simulation_frequency"])) for _ in range(self.config["simulation_frequency"])]
 

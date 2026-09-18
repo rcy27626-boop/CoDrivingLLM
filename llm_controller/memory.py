@@ -78,14 +78,30 @@ class DrivingMemory:
         print("==========Loaded ", db_path, " Memory, Now the database has ", len(self.scenario_memory._collection.get(include=['embeddings'])['embeddings']), " items.==========")
 
 
+    def memory_size(self):
+        """当前集合条目数（改动清单 #11）。
+
+        空库兜底与"库太小不产生覆盖度信号"判定都要用它，避免走 similarity_search 才发现库是空的。
+        """
+        try:
+            return int(self.scenario_memory._collection.count())
+        except Exception as e:
+            print(f"Failed to read memory size: {e}")
+            return 0
+
     def retrieveMemory(self, query_scenario, top_k=5):
         """Retrieve the most similar scenarios from memory."""
         # 若同时开启写库与检索，先落盘，确保本次新增经验可被检索到。
         self.flush()
         similarity_results = self.scenario_memory.similarity_search_with_score(query_scenario, k=top_k)
         fewshot_results = []
-        for idx in range(0, len(similarity_results)):
-            fewshot_results.append(similarity_results[idx][0].metadata)
+        for doc, score in similarity_results:
+            # 改动清单 #10：把检索距离一起带出来（Chroma 默认 L2，越小 = 越接近库内记忆 = 场景越"熟"）。
+            # 分数只进日志与覆盖度降级模块，不拼进 prompt（LLM 看不到分数），
+            # 因此 --memory-signature orig 时相对改动前的行为逐字一致。
+            meta = dict(doc.metadata)
+            meta['retrieval_score'] = float(score)
+            fewshot_results.append(meta)
         return fewshot_results
 
     # def retrieveMemory(self, query_scenario, top_k=5):

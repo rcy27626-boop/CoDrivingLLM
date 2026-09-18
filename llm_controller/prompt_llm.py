@@ -611,6 +611,24 @@ def cal_ttcp(speed_limit, veh_dis2cp, veh_v):
         ttcp = (v - veh_v) / MAX_ACCELERATION
     return ttcp
 
+def relation_from_delta_ttcp(delta_ttcp):
+    """把 ΔTTCP 映射为 5 档 relation 文本。
+
+    原实现内联在 format_training_info() 里；抽成函数后由 format_training_info()
+    与 build_memory_signature() 共用，避免两处阈值写法不一致。
+    判定阈值与原实现逐字一致，行为不变（改动清单 #9）。
+    """
+    if delta_ttcp >= 5:
+        return 'much close'
+    elif 5 > delta_ttcp >= 2:
+        return 'slight close'
+    elif 2 > delta_ttcp >= -2:
+        return 'equal close'
+    elif -2 > delta_ttcp >= -5:
+        return 'slight further'
+    else:
+        return 'much further'
+
 def check_safety_with_conflict_vehicles(ego_veh, negotiation_results, conflicting_info, env):
     '''calculate TTCP to determine dangerous, then based on negotiation results provided by LLM, if is leading vehicle acceleration conflict TRUe'''
     safety_analysis = {
@@ -665,6 +683,8 @@ def check_safety_with_conflict_vehicles(ego_veh, negotiation_results, conflictin
         safety_analysis['acceleration_conflict'] = f'acceleration will cause danger, you can not accelerate'
     if dangerous_level == 3:
         safety_analysis['acceleration_conflict'] = f'acceleration will cause serious danger, must decelerate.'  # You output decision have to be SLOWER (note that it is in capital letters)!!!
+    # 改动清单 #8：把危险等级带出来，供覆盖度降级模块使用；只加字典字段，不产生新的 prompt 文本
+    most_dangerous_info['dangerous_level'] = dangerous_level
     return safety_analysis, most_dangerous_info
 
 def generate_comment(relation, llm_action):
@@ -724,16 +744,7 @@ def format_training_info(available_actions_msg, lanes_info_msg, all_lane_info_ms
 
     # Most dangerous conflict info which same pattern as memory
     if most_dangerous_info['delta ttcp'] is not None:
-        if most_dangerous_info['delta ttcp'] >= 5:
-            relation = 'much close'
-        elif 5 > most_dangerous_info['delta ttcp'] >= 2:
-            relation = 'slight close'
-        elif 2 > most_dangerous_info['delta ttcp'] >= -2:
-            relation = 'equal close'
-        elif -2 > most_dangerous_info['delta ttcp'] >= -5:
-            relation = 'slight further'
-        else:
-            relation = 'much further'
+        relation = relation_from_delta_ttcp(most_dangerous_info['delta ttcp'])
         formatted_message += f"\n Currently, the most dangerous collision information with the ego vehicle is as follows:"
         formatted_message += f"Ego is _{relation}_ to conflict point than other vehicles considering current speed and distance, Ego vehicle speed minus other vehicle is {most_dangerous_info['delta speed']}"
     else:

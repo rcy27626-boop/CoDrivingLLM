@@ -9,7 +9,7 @@ import imageio
 import openpyxl
 
 import highway_env
-from llm_controller.llm_agent_action import LlmAgent_action_module
+from llm_controller.llm_agent_action import LlmAgent_action_module, MEMORY_MIN_LIBRARY_SIZE
 from llm_controller.llm_agent_negotiation_system import LlmAgent_negotiation_module
 from llm_controller.memory import DrivingMemory
 
@@ -118,7 +118,36 @@ def main():
                         help="成功判定用论文口径：所有CAV都安全到达（默认开启）；关闭则至少1辆到达")
     parser.add_argument("--batch", default="default",
                         help="实验批次名称，隔离输出目录（如 20260903_smoke / 20260905_full）")
+    # ===== 方向D（覆盖度感知记忆签名）新增参数 =====
+    parser.add_argument("--memory-signature", default="orig", choices=["orig", "new"],
+                        help="记忆签名类型：orig=论文原签名（prompt_info 最后一行）；new=覆盖度感知签名（方向D 新增）")
+    parser.add_argument("--coverage-guard", action="store_true", default=False,
+                        help="启用覆盖度降级干预（需配合 --th-a/--th-b；与 --memory-update 互斥）")
+    parser.add_argument("--th-a", type=float, default=None,
+                        help="覆盖度阈值 th_a：coverage_signal <= th_a 视为熟（不偏置）")
+    parser.add_argument("--th-b", type=float, default=None,
+                        help="覆盖度阈值 th_b：coverage_signal > th_b 视为很生（偏置 2 档）")
+    parser.add_argument("--initial-vehicle-count", type=int, default=10,
+                        help="reset 时的初始车辆数：ID 用 10，OOD 高密度用 40~60（仅 intersection 生效）")
+    parser.add_argument("--spawn-probability", type=float, default=0.6,
+                        help="随机车辆生成概率（仅 intersection 生效，默认 0.6 与改动前一致；调高可加密度）")
+    parser.add_argument("--split", default=None,
+                        help="实验标识：只决定 step_logs 文件名；默认 v{initial_vehicle_count}_{memory_signature}")
+    parser.add_argument("--memory-db-dir", default=None,
+                        help="记忆库根目录（决定读写哪个库）；默认 seed_memory/<scene>/<split>，实际落盘再加一层 <env_id>")
     args = parser.parse_args()
+
+    # split 只决定日志文件名，不改结果目录结构（设计稿 v3-11 / v3-19）
+    if args.split is None:
+        args.split = f"v{args.initial_vehicle_count}_{args.memory_signature}"
+
+    # 参数校验（设计稿 §6.3）
+    if args.coverage_guard and args.memory_update:
+        parser.error("--coverage-guard 与 --memory-update 互斥：建库必须是纯策略行为，实验必须冻结库")
+    if args.coverage_guard and (args.th_a is None or args.th_b is None):
+        parser.error("--coverage-guard 需要 --th-a 与 --th-b（先用冻结库做 leave-one-out 标定）")
+    if args.coverage_guard and args.scene == "highway":
+        parser.error("--coverage-guard 只在 intersection / merge 场景启用（highway 动作空间含换道，本次不做）")
 
     # few-shot 参数
     memory_top_k = 2
@@ -135,6 +164,16 @@ def main():
               "highway": "highway-v0"}[args.scene]
     env = gym.make(env_id)
 
+    # 按命令行覆盖场景参数（OOD 密度旋钮）
+    # initial_vehicle_count 在每次 _reset() 里被读取，这里更新即生效；
+    # spawn_probability 由 intersection_env.py 的 _make_vehicles 传入才生效（默认 0.6 与改动前一致）。
+    # 用 unwrapped 访问真实环境实例：gym 不同版本 make() 可能返回包装器，
+    # 包装器虽然会转发属性，但 unwrapped 在任何版本都指向底层 env，更稳。
+    env.unwrapped.config.update({
+        "initial_vehicle_count": args.initial_vehicle_count,
+        "spawn_probability": args.spawn_probability,
+    })
+
     # 输出目录：result/<batch>/<scene>/<method>/{data, video, progress.json}
     root = args.output_dir or os.path.join("llm_controller", "result", args.batch)
     out_dir = os.path.join(root, args.scene, args.method, "data")
@@ -148,9 +187,11 @@ def main():
     # 2shot/5shot 共享同一场景的种子记忆库（放在固定位置，不随 batch/method 隔离）
     # 0shot/no-negotiation 不创建记忆对象，但 --memory-update 建库时也需要路径
     if use_memory or args.memory_update:
-        mem_dir = os.path.join("llm_controller", "seed_memory", args.scene)
+        # 库路径与日志 split 分离（设计稿 v3-20）：库路径由 --memory-db-dir 决定
+        mem_dir = args.memory_db_dir or os.path.join("llm_controller", "seed_memory", args.scene, args.split)
         os.makedirs(mem_dir, exist_ok=True)
         os.environ["MEMORY_DB_DIR"] = mem_dir
+        print(f"[memory] MEMORY_DB_DIR = {mem_dir}（实际落盘 {os.path.join(mem_dir, env_id)}）")
 
     total_start = time.time()
     for i in range(args.start, args.start + args.n):
@@ -162,15 +203,24 @@ def main():
         try:
             # 视频录制（默认开启，--no-video 时关闭）
             writer = None
+            step_log_f = None
             if not args.no_video:
                 video_path = os.path.join(video_dir, str(i) + ".mp4")
                 writer = imageio.get_writer(video_path, fps=30)
 
             file_name, workbook = open_excel(out_dir, i)
 
+            # 每步决策日志（离线迭代的唯一数据源，设计稿 §5）：每集一个文件，文件名带 split 与轮次号
+            step_log_path = os.path.join(out_dir, f"step_logs_{args.split}_ep{i}.jsonl")
+            step_log_f = open(step_log_path, "w", encoding="utf-8")
+
             # 每轮独立记忆对象（2shot/5shot 时用于检索；0shot/no-negotiation 用 None）
             # --memory-update 建库时也需要记忆对象（写入用）
             memory = DrivingMemory(env) if (use_memory or args.memory_update) else None
+            if use_memory and memory is not None:
+                lib_size = memory.memory_size()
+                if lib_size < MEMORY_MIN_LIBRARY_SIZE:
+                    print(f"[warn] 记忆库条目数 {lib_size} < {MEMORY_MIN_LIBRARY_SIZE}：本集不产生 coverage_signal（不触发降级）")
 
             terminated = False
             t = 0
@@ -178,6 +228,7 @@ def main():
             # 用 testing mode 显式指定种子，可同时固定 numpy.random 和 random，
             # 并避免调用被实例属性遮蔽的 env.seed() 方法。
             obs = env.reset(is_training=False, testing_seeds=args.seed + i)
+            n_vehicles_fixed = len(env.road.vehicles)  # 签名用的车数：reset 后固定、整集不变（设计稿 v3-15）
             llm_calls = 0
             episode_parse_failures = 0
 
@@ -193,17 +244,32 @@ def main():
 
                 # 决策
                 llm_agent = LlmAgent_action_module(env)
-                llm_actions = llm_agent.llm_controller_run(
+                llm_actions, step_records = llm_agent.llm_controller_run(
                     env, negotiation_prompt, conflicting_info,
                     env.controlled_vehicles, memory,
                     use_memory=use_memory, memory_top_k=memory_top_k,
-                    memory_update=args.memory_update)
+                    memory_update=args.memory_update,
+                    memory_signature_kind=args.memory_signature,
+                    coverage_guard=args.coverage_guard,
+                    th_a=args.th_a, th_b=args.th_b,
+                    log_ctx={"episode": i, "step": t, "split": args.split},
+                    n_vehicles_fixed=n_vehicles_fixed)
                 llm_calls += len(llm_actions)
                 episode_parse_failures += llm_agent.parse_failures
 
                 action = [item for sublist in llm_actions for item in sublist]
 
                 obs, global_reward, terminated, info = env.step(tuple(action), env)
+
+                # step 之后才能补上 crashed/terminated/arrived（设计稿 §5.1 / v3-4）
+                veh_by_id = {str(vehicle): vehicle for vehicle in env.controlled_vehicles}
+                for step_record in step_records:
+                    step_veh = veh_by_id.get(step_record.get('vehicle_id'))
+                    step_record['crashed_after'] = bool(step_veh.crashed) if step_veh is not None else None
+                    step_record['arrived_after'] = bool(has_arrived(env, step_veh)) if step_veh is not None else None
+                    step_record['terminated_after'] = bool(terminated)
+                    step_log_f.write(json.dumps(step_record, ensure_ascii=False) + "\n")
+                step_log_f.flush()
 
                 if not args.no_video and writer is not None:
                     frame = env.render("rgb_array")
@@ -219,6 +285,9 @@ def main():
 
             if writer is not None:
                 writer.close()
+
+            if step_log_f is not None:
+                step_log_f.close()
 
             summary, avg_speed = episode_summary(env)
             round_dur = round(time.time() - round_start, 1)
@@ -268,6 +337,11 @@ def main():
             if 'writer' in dir() and writer is not None:
                 try:
                     writer.close()
+                except Exception:
+                    pass
+            if locals().get('step_log_f') is not None:
+                try:
+                    step_log_f.close()
                 except Exception:
                     pass
             # 异常退出时尽量保存已缓存的记忆，flush 自身会捕获写入异常。
